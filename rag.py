@@ -197,16 +197,40 @@ if not selected_docs:
 
 # -------------------- BUILD CONTEXT --------------------
 
-def join_docs(docs, max_chars=20000):
+def join_docs_safe(docs, max_chars=5000):
+    """Join document chunks without exceeding token limits."""
     text, total = [], 0
     for d in docs:
-        if total + len(d.page_content) > max_chars:
+        content = f"[Page {d.metadata.get('page','')}] {d.page_content}"
+        if total + len(content) > max_chars:
             break
-        text.append(f"[Page {d.metadata.get('page', '')}] {d.page_content}")
-        total += len(d.page_content)
+        text.append(content)
+        total += len(content)
     return "\n\n".join(text)
 
-context = join_docs(selected_docs)
+context = join_docs_safe(selected_docs)
+
+# If it's a summary request and the PDF is too long, split into multiple parts
+if is_summary:
+    chunk_size = 4000  # safe limit
+    text_parts = [context[i:i+chunk_size] for i in range(0, len(context), chunk_size)]
+    summary_answers = []
+    for part in text_parts:
+        final_msgs = summary_prompt.format_messages(
+            input=user_question,
+            context=part,
+            chat_history=chat_history.messages
+        )
+        ans = llm.invoke(final_msgs).content.strip()
+        summary_answers.append(ans)
+    answer = "\n\n".join(summary_answers)
+else:
+    final_msgs = qa_prompt.format_messages(
+        input=user_question,
+        context=context,
+        chat_history=chat_history.messages
+    )
+    answer = llm.invoke(final_msgs).content.strip()
 
 # -------------------- FINAL ANSWER --------------------
 
@@ -227,3 +251,4 @@ st.chat_message("assistant").write(answer)
 
 chat_history.add_user_message(user_question)
 chat_history.add_ai_message(answer)
+
